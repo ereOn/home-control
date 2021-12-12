@@ -5,6 +5,7 @@ description = "A home automation interface for embedded systems."
 license = "MIT"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/ereOn/home-control.git"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
