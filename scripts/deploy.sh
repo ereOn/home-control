@@ -7,7 +7,7 @@ set -o xtrace
 
 readonly BINARY_NAME="home-control"
 readonly TARGET_HOST=$1
-readonly TARGET_PATH=/home/pi/${BINARY_NAME}
+readonly TARGET_PATH=/home/pi/.local/bin/${BINARY_NAME}
 readonly TARGET_ARCH=armv7-unknown-linux-gnueabihf
 readonly SOURCE_PATH=./target/${TARGET_ARCH}/release/${BINARY_NAME}
 
