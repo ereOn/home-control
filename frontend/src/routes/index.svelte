@@ -3,7 +3,7 @@
 </script>
 
 <script lang="ts">
-	import Counter from '$lib/Counter.svelte';
+	import LedControl from '$lib/LedControl.svelte';
 </script>
 
 <svelte:head>
@@ -26,7 +26,9 @@
 		try editing <strong>src/routes/index.svelte</strong>
 	</h2>
 
-	<Counter />
+	<LedControl ledPath="/api/v1/led/green" ledColor="green" />
+	<LedControl ledPath="/api/v1/led/red" ledColor="red" />
+	<LedControl ledPath="/api/v1/buzzer" ledColor="silver" />
 </section>
 
 <style>
