@@ -1,13 +1,33 @@
 use log::info;
 
+use warp_reverse_proxy::reverse_proxy_filter;
+
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     home_control::log::init();
-    let config = home_control::config::Config::new();
+    let config = home_control::config::Config::new()?;
 
     info!("Home-control, version {}", env!("CARGO_PKG_VERSION"));
 
-    let routes = warp::fs::dir("static");
+    if let Some(reverse_proxy_url) = config.reverse_proxy_url {
+        info!(
+            "Serving files from reverse proxy at `{}`",
+            reverse_proxy_url
+        );
 
-    warp::serve(routes).run(config.listen_endpoint).await
+        warp::serve(reverse_proxy_filter("".to_string(), reverse_proxy_url))
+            .run(config.listen_endpoint)
+            .await
+    } else {
+        info!(
+            "Serving static files from `{}`.",
+            config.static_root.display()
+        );
+
+        warp::serve(warp::fs::dir(config.static_root))
+            .run(config.listen_endpoint)
+            .await
+    }
+
+    Ok(())
 }
