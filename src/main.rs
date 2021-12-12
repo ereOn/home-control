@@ -1,6 +1,11 @@
 use log::info;
 
+use rust_embed::RustEmbed;
 use warp_reverse_proxy::reverse_proxy_filter;
+
+#[derive(RustEmbed)]
+#[folder = "frontend/build"]
+struct Data;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -19,12 +24,9 @@ async fn main() -> anyhow::Result<()> {
             .run(config.listen_endpoint)
             .await
     } else {
-        info!(
-            "Serving static files from `{}`.",
-            config.static_root.display()
-        );
+        info!("Serving static files.",);
 
-        warp::serve(warp::fs::dir(config.static_root))
+        warp::serve(warp_embed::embed(&Data))
             .run(config.listen_endpoint)
             .await
     }
