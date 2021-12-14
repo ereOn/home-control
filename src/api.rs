@@ -1,19 +1,16 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use log::info;
-use rppal::{
-    gpio::{Gpio, OutputPin},
-    system::DeviceInfo,
-};
 use serde::{Deserialize, Serialize};
 use warp::{Filter, Rejection, Reply};
 
-use crate::config::ApiConfig;
+use crate::{
+    config::GpioConfig,
+    gpio_controller::{GpioController, GpioPin},
+};
 
 pub struct Api {
-    config: ApiConfig,
-    gpio: Gpio,
+    gpio_controller: GpioController,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
@@ -33,20 +30,12 @@ impl From<ApiBool> for bool {
 }
 
 impl Api {
-    pub fn new(config: ApiConfig) -> anyhow::Result<Arc<Self>> {
-        let model = DeviceInfo::new()
-            .context("Failed to query Raspberry Pi model")?
-            .model();
+    pub fn new(config: GpioConfig) -> anyhow::Result<Arc<Self>> {
+        let gpio = GpioController::new(config).context("failed to create GPIO")?;
 
-        info!("Raspberry Pi model: {}", model);
-
-        let gpio = Gpio::new().context("Failed to create GPIO")?;
-
-        Ok(Arc::new(Self { config, gpio }))
-    }
-
-    pub fn config(&self) -> &ApiConfig {
-        &self.config
+        Ok(Arc::new(Self {
+            gpio_controller: gpio,
+        }))
     }
 
     pub fn routes(
@@ -111,7 +100,8 @@ impl Api {
 
     async fn api_buzzer_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
         let status = self
-            .get_output_pin_status(self.config.buzzer_pin)
+            .gpio_controller
+            .get_output_pin_status(GpioPin::Buzzer)
             .map_err(|_| warp::reject::reject())?;
 
         Ok(warp::reply::json(&status))
@@ -119,7 +109,8 @@ impl Api {
 
     async fn api_buzzer_set(self: Arc<Self>, status: ApiBool) -> Result<impl Reply, Rejection> {
         let status = status.into();
-        self.set_output_pin_status(self.config.buzzer_pin, status)
+        self.gpio_controller
+            .set_output_pin_status(GpioPin::Buzzer, status)
             .map_err(|_| warp::reject::reject())?;
 
         Ok(warp::reply::json(&status))
@@ -127,7 +118,8 @@ impl Api {
 
     async fn api_green_led_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
         let status = self
-            .get_output_pin_status(self.config.green_led_pin)
+            .gpio_controller
+            .get_output_pin_status(GpioPin::GreenLed)
             .map_err(|_| warp::reject::reject())?;
 
         Ok(warp::reply::json(&status))
@@ -135,7 +127,8 @@ impl Api {
 
     async fn api_green_led_set(self: Arc<Self>, status: ApiBool) -> Result<impl Reply, Rejection> {
         let status = status.into();
-        self.set_output_pin_status(self.config.green_led_pin, status)
+        self.gpio_controller
+            .set_output_pin_status(GpioPin::GreenLed, status)
             .map_err(|_| warp::reject::reject())?;
 
         Ok(warp::reply::json(&status))
@@ -143,7 +136,8 @@ impl Api {
 
     async fn api_red_led_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
         let status = self
-            .get_output_pin_status(self.config.red_led_pin)
+            .gpio_controller
+            .get_output_pin_status(GpioPin::RedLed)
             .map_err(|_| warp::reject::reject())?;
 
         Ok(warp::reply::json(&status))
@@ -151,35 +145,10 @@ impl Api {
 
     async fn api_red_led_set(self: Arc<Self>, status: ApiBool) -> Result<impl Reply, Rejection> {
         let status = status.into();
-        self.set_output_pin_status(self.config.red_led_pin, status)
+        self.gpio_controller
+            .set_output_pin_status(GpioPin::RedLed, status)
             .map_err(|_| warp::reject::reject())?;
 
         Ok(warp::reply::json(&status))
-    }
-
-    fn get_output_pin(&self, pin: u8) -> anyhow::Result<OutputPin> {
-        Ok(self.gpio.get(pin)?.into_output())
-    }
-
-    fn get_output_pin_status(&self, pin: u8) -> anyhow::Result<bool> {
-        let pin = self.get_output_pin(pin)?;
-
-        Ok(pin.is_set_high())
-    }
-
-    fn set_output_pin_status(&self, pin: u8, status: bool) -> anyhow::Result<()> {
-        let status: bool = status.into();
-
-        info!("Setting pin {} to {}", pin, status);
-
-        let mut pin = self.get_output_pin(pin)?;
-
-        if status {
-            pin.set_high();
-        } else {
-            pin.set_low();
-        }
-
-        Ok(())
     }
 }

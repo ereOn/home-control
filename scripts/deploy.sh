@@ -11,6 +11,6 @@ readonly TARGET_PATH=/home/pi/.local/bin/${BINARY_NAME}
 readonly TARGET_ARCH=armv7-unknown-linux-gnueabihf
 readonly SOURCE_PATH=./target/${TARGET_ARCH}/release/${BINARY_NAME}
 
-cargo build --release --target=${TARGET_ARCH}
+cargo build --release --target=${TARGET_ARCH} --features gpio
 rsync ${SOURCE_PATH} ${TARGET_HOST}:${TARGET_PATH}
 ssh -t ${TARGET_HOST} ${TARGET_PATH}

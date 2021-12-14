@@ -20,10 +20,10 @@ const DEFAULT_ECHO_PIN: &str = "23";
 pub struct Config {
     pub listen_endpoint: SocketAddr,
     pub reverse_proxy_url: Option<String>,
-    pub api_config: ApiConfig,
+    pub gpio_config: GpioConfig,
 }
 
-pub struct ApiConfig {
+pub struct GpioConfig {
     pub red_led_pin: u8,
     pub green_led_pin: u8,
     pub buzzer_pin: u8,
@@ -90,7 +90,7 @@ impl Config {
             reverse_proxy_url: matches
                 .value_of(ARG_REVERSE_PROXY_URL)
                 .map(|s| s.to_string()),
-            api_config: ApiConfig {
+            gpio_config: GpioConfig {
                 red_led_pin: read_simple_arg(&matches, ARG_RED_LED_PIN, DEFAULT_RED_LED_PIN)?,
                 green_led_pin: read_simple_arg(&matches, ARG_GREEN_LED_PIN, DEFAULT_GREEN_LED_PIN)?,
                 buzzer_pin: read_simple_arg(&matches, ARG_BUZZER_PIN, DEFAULT_BUZZER_PIN)?,

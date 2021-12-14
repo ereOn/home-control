@@ -15,7 +15,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Home-control, version {}", env!("CARGO_PKG_VERSION"));
 
-    let api = home_control::api::Api::new(config.api_config)?;
+    let api = home_control::api::Api::new(config.gpio_config)?;
     let routes = api.routes();
 
     if let Some(reverse_proxy_url) = config.reverse_proxy_url {
