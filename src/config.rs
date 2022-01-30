@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 
-const DEFAULT_LISTEN_ENDPOINT: &str = "127.0.0.1:8000";
 const DEFAULT_RED_LED_PIN: &str = "17";
 const DEFAULT_GREEN_LED_PIN: &str = "27";
 const DEFAULT_BUZZER_PIN: &str = "18";
@@ -13,6 +12,8 @@ pub struct Config {
     pub listen_endpoint: SocketAddr,
     pub reverse_proxy_url: Option<String>,
     pub gpio_config: GpioConfig,
+    pub home_assistant_endpoint: String,
+    pub home_assistant_token: String,
 }
 
 pub struct GpioConfig {
@@ -27,14 +28,30 @@ pub struct GpioConfig {
 #[clap(author, version, about, long_about = None)]
 struct Args {
     #[clap(
+        value_name = "HOME_ASSISTANT_ENDPOINT",
+        env,
+        help = "The endpoint of the Home Assistant API. Example: `host:port`"
+    )]
+    pub home_assistant_endpoint: String,
+
+    #[clap(
+        long,
+        short = 't',
+        env,
+        value_name = "HOME_ASSISTANT_TOKEN",
+        help = "The Home Assistant API long-lived token"
+    )]
+    pub home_assistant_token: String,
+
+    #[clap(
         long,
         short,
-        default_value = DEFAULT_LISTEN_ENDPOINT,
+        default_value = "127.0.0.1:8000",
         value_name = "LISTEN_ENDPOINT"
     )]
     pub listen_endpoint: SocketAddr,
 
-    #[clap(long, value_name = "REVERSE_PROXY_URL")]
+    #[clap(long, short, value_name = "REVERSE_PROXY_URL")]
     pub reverse_proxy_url: Option<String>,
 
     #[clap(
@@ -78,6 +95,8 @@ impl Config {
         let args = Args::try_parse()?;
 
         Ok(Self {
+            home_assistant_endpoint: args.home_assistant_endpoint,
+            home_assistant_token: args.home_assistant_token,
             listen_endpoint: args.listen_endpoint,
             reverse_proxy_url: args.reverse_proxy_url,
             gpio_config: GpioConfig {
