@@ -11,7 +11,7 @@ backend:
 dev:
 	tmux \
 		new-session 'cd frontend && npm install && npm run dev' \; \
-		split-window -h 'cargo run' \;
+		split-window -h 'cargo watch -w src -x run' \;
 
 deploy:
 	./scripts/deploy.sh

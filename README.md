@@ -29,6 +29,7 @@ Running the binary on the local machine in deployment requires a few additional
 things:
 
 - `tmux`
+- `cargo watch` (`cargo install cargo-watch`)
 
 Then, set the following environment variables so that `cargo run` can work
 without explicit arguments:
