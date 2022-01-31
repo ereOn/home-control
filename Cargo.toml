@@ -15,13 +15,20 @@ gpio = ["rppal"]
 anyhow = "1.0.51"
 clap = { version = "3.0.13", features = ["derive", "env"] }
 log = "0.4.14"
-rppal = { version ="0.13.1", optional = true }
+futures-util = "0.3.0"
+rppal = { version = "0.13.1", optional = true }
 rust-embed = "6.3.0"
 serde = { version = "1.0.89", features = ["derive"] }
 serde_json = "1.0.72"
 simplelog = "0.11"
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.16"
+tokio-tungstenite = { version = "0.16", features = [
+    "connect",
+    "rustls-tls-webpki-roots",
+] }
+url = "2.2"
 warp = "0.3"
 warp-embed = "0.4.0"
-warp-reverse-proxy = { version = "0.4.0", default-features = false, features=["rustls-tls"] }
+warp-reverse-proxy = { version = "0.4.0", default-features = false, features = [
+    "rustls-tls",
+] }

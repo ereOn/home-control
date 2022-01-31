@@ -15,6 +15,9 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Home-control, version {}", env!("CARGO_PKG_VERSION"));
 
+    let mut client =
+        home_control::home_assistant::Client::new(config.home_assistant_endpoint.clone()).await?;
+    client.run().await?;
     let api = home_control::api::Api::new(config.gpio_config)?;
     let routes = api.routes();
 
