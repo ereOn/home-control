@@ -1,5 +1,6 @@
 use log::info;
 
+use home_control::{api::Api, home_assistant::Client};
 use rust_embed::RustEmbed;
 use warp::Filter;
 use warp_reverse_proxy::reverse_proxy_filter;
@@ -15,10 +16,14 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Home-control, version {}", env!("CARGO_PKG_VERSION"));
 
-    let mut client =
-        home_control::home_assistant::Client::new(config.home_assistant_endpoint.clone()).await?;
+    let mut client = Client::new(
+        &config.home_assistant_endpoint,
+        &config.home_assistant_token,
+    )
+    .await?;
+
     client.run().await?;
-    let api = home_control::api::Api::new(config.gpio_config)?;
+    let api = Api::new(config.gpio_config)?;
     let routes = api.routes();
 
     if let Some(reverse_proxy_url) = config.reverse_proxy_url {
