@@ -16,11 +16,8 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Home-control, version {}", env!("CARGO_PKG_VERSION"));
 
-    let mut client = Client::new(
-        &config.home_assistant_endpoint,
-        &config.home_assistant_token,
-    )
-    .await?;
+    let mut client =
+        Client::new(&config.home_assistant_endpoint, config.home_assistant_token).await?;
 
     client.run().await?;
     let api = Api::new(config.gpio_config)?;
