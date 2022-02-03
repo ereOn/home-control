@@ -2,15 +2,18 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use warp::{Filter, Rejection, Reply};
 
 use crate::{
     config::GpioConfig,
     gpio_controller::{GpioController, GpioPin},
+    home_assistant::Controller,
 };
 
 pub struct Api {
     gpio_controller: GpioController,
+    ha_controller: Controller,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
@@ -30,11 +33,12 @@ impl From<ApiBool> for bool {
 }
 
 impl Api {
-    pub fn new(config: GpioConfig) -> anyhow::Result<Arc<Self>> {
+    pub fn new(config: GpioConfig, ha_controller: Controller) -> anyhow::Result<Arc<Self>> {
         let gpio = GpioController::new(config).context("failed to create GPIO")?;
 
         Ok(Arc::new(Self {
             gpio_controller: gpio,
+            ha_controller,
         }))
     }
 
@@ -129,6 +133,16 @@ impl Api {
         let status = status.into();
         self.gpio_controller
             .set_output_pin_status(GpioPin::GreenLed, status)
+            .map_err(|_| warp::reject::reject())?;
+
+        self.ha_controller
+            .call_service(
+                "light",
+                "toggle",
+                Some(&json!({})),
+                Some(&json!({"entity_id": "light.arbre"})),
+            )
+            .await
             .map_err(|_| warp::reject::reject())?;
 
         Ok(warp::reply::json(&status))

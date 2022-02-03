@@ -16,11 +16,10 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Home-control, version {}", env!("CARGO_PKG_VERSION"));
 
-    let mut client =
+    let ha_client =
         Client::new(&config.home_assistant_endpoint, config.home_assistant_token).await?;
-
-    client.run().await?;
-    let api = Api::new(config.gpio_config)?;
+    let ha_controller = ha_client.new_controller();
+    let api = Api::new(config.gpio_config, ha_controller)?;
     let routes = api.routes();
 
     if let Some(reverse_proxy_url) = config.reverse_proxy_url {
@@ -29,16 +28,20 @@ async fn main() -> anyhow::Result<()> {
             reverse_proxy_url
         );
 
-        warp::serve(routes.or(reverse_proxy_filter("".to_string(), reverse_proxy_url)))
-            .run(config.listen_endpoint)
-            .await
+        tokio::select! {
+            r = ha_client.run() => r?,
+            _ = warp::serve(routes.or(reverse_proxy_filter("".to_string(), reverse_proxy_url)))
+                .run(config.listen_endpoint) => {},
+        }
     } else {
         info!("Serving static files.",);
 
-        warp::serve(routes.or(warp_embed::embed(&Data)))
-            .run(config.listen_endpoint)
-            .await
-    }
+        tokio::select! {
+            r = ha_client.run() => r?,
+            _ = warp::serve(routes.or(warp_embed::embed(&Data)))
+                .run(config.listen_endpoint) => {},
+        }
+    };
 
     Ok(())
 }
