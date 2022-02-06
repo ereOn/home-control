@@ -140,10 +140,10 @@ impl Api {
                 "light",
                 "toggle",
                 Some(&json!({})),
-                Some(&json!({"entity_id": "light.arbre"})),
+                Some(&json!({"entity_id": "light.pool"})),
             )
             .await
-            .map_err(|_| warp::reject::reject())?;
+            .map_err(warp::reject::custom)?;
 
         Ok(warp::reply::json(&status))
     }

@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+use std::{collections::HashMap, fmt::Display};
+
+use anyhow::Context;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
@@ -7,6 +9,8 @@ use tokio_tungstenite::{
     tungstenite::{Error as WsError, Message as WsMessage},
 };
 use url::Url;
+
+use crate::Result;
 
 trait WebSocket<Item = WsMessage, Error = WsError>:
     Sink<Item, Error = Error> + Stream<Item = Result<Item, Error>> + Unpin
@@ -18,15 +22,18 @@ impl<T> WebSocket for T where
 {
 }
 
+type Sender = tokio::sync::oneshot::Sender<Result<serde_json::Value>>;
+type MessageAndSender = (Message, Sender);
+
 pub struct Client {
     ws: Box<dyn WebSocket>,
     access_token: String,
-    tx: tokio::sync::mpsc::Sender<Message>,
-    rx: tokio::sync::mpsc::Receiver<Message>,
+    tx: tokio::sync::mpsc::Sender<MessageAndSender>,
+    rx: tokio::sync::mpsc::Receiver<MessageAndSender>,
 }
 
 pub struct Controller {
-    tx: tokio::sync::mpsc::Sender<Message>,
+    tx: tokio::sync::mpsc::Sender<MessageAndSender>,
 }
 
 impl Client {
@@ -61,16 +68,24 @@ impl Client {
     pub async fn run(self) -> Result<()> {
         let mut rx = self.rx;
         let mut ws = self.ws;
+        let mut id: u64 = 1;
+        let mut senders_by_id = HashMap::new();
 
         loop {
             tokio::select! {
-                message = rx.recv() =>
-                    if let Some(message) = message {
+                pair = rx.recv() =>
+                    if let Some((mut message, sender)) = pair {
+                        if message.inject_id(id) {
+                            senders_by_id.insert(id, sender);
+                            id += 1;
+
                         debug!("Sending message: {:?}", message);
-                        //TODO: Increment messages ids...
                         Self::send_message(&mut ws, message).await?;
+                        } else {
+                            warn!("Failed to inject message ID: not sending message: {:?}", message);
+                        }
                     } else {
-                        break Err(anyhow::anyhow!("channel closed"));
+                        Err(anyhow::anyhow!("channel closed"))?;
                     },
                 message = Self::read_message(&mut ws) => match message? {
                     Message::AuthRequired { ha_version } => {
@@ -88,7 +103,22 @@ impl Client {
                         info!("Authenticated with Home-Assistant version {}", ha_version);
                     }
                     Message::AuthInvalid { message } => {
-                        break Err(anyhow::anyhow!("Authentication failed: {}", message));
+                        Err(anyhow::anyhow!("authentication failed: {}", message))?;
+                    }
+                    Message::Result { id, success, result, error } => {
+                        let result = if success {
+                            Ok(result)
+                        } else {
+                            Err(error.unwrap_or_default().into())
+                        };
+
+                        if let Some(sender) = senders_by_id.remove(&id) {
+                            if let Err(_) = sender.send(result) {
+                                warn!("Failed to send result to sender for call #{}", id);
+                            }
+                        } else {
+                            warn!("Discarding result for unknown id: {}", id);
+                        }
                     }
                     message => {
                         warn!(
@@ -113,21 +143,25 @@ impl Client {
                         }
                     },
                     WsMessage::Ping(data) => {
-                        ws.send(WsMessage::Pong(data)).await?;
+                        ws.send(WsMessage::Pong(data))
+                            .await
+                            .map_err::<anyhow::Error, _>(Into::into)?;
                         continue;
                     }
                     _ => {
-                        return Err(anyhow::anyhow!(
+                        Err(anyhow::anyhow!(
                             "unexpected Web-Socket message: {:?}",
                             message
-                        ));
+                        ))?;
                     }
                 },
-                Some(Err(err)) => break Err(err).context("failed to read the Web-Socket message"),
+                Some(Err(err)) => {
+                    Err(err).context("failed to read the Web-Socket message")?;
+                }
                 None => {
-                    return Err(anyhow::anyhow!(
+                    Err(anyhow::anyhow!(
                         "the stream closed while waiting for the first Web-Socket message"
-                    ));
+                    ))?;
                 }
             };
         }
@@ -141,6 +175,7 @@ impl Client {
         )
         .await
         .context("failed to send the Web-Socket message")
+        .map_err(Into::into)
     }
 }
 
@@ -152,16 +187,29 @@ impl Controller {
         service_data: Option<&serde_json::Value>,
         target: Option<&serde_json::Value>,
     ) -> Result<()> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+
         self.tx
-            .send(Message::CallService {
-                id: 1,
-                domain: domain.to_string(),
-                service: service.to_string(),
-                service_data: service_data.cloned(),
-                target: target.cloned(),
-            })
+            .send((
+                Message::CallService {
+                    id: 1,
+                    domain: domain.to_string(),
+                    service: service.to_string(),
+                    service_data: service_data.cloned(),
+                    target: target.cloned(),
+                },
+                sender,
+            ))
             .await
-            .context("failed to send the call service message")
+            .context("failed to send the call service message")?;
+
+        let result = receiver
+            .await
+            .context("failed to receive the call service response")??;
+
+        debug!("Call service result: {:?}", result);
+
+        Ok(())
     }
 }
 
@@ -187,4 +235,50 @@ enum Message {
         service_data: Option<serde_json::Value>,
         target: Option<serde_json::Value>,
     },
+    Result {
+        id: u64,
+        success: bool,
+        #[serde(default)]
+        result: serde_json::Value,
+        error: Option<Error>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Error {
+    code: String,
+    message: String,
+}
+
+impl Default for Error {
+    fn default() -> Self {
+        Self {
+            code: "unspecified".to_string(),
+            message: "no error information was present".to_string(),
+        }
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "E{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl Message {
+    fn inject_id(&mut self, new_id: u64) -> bool {
+        match self {
+            Message::AuthRequired { .. }
+            | Message::Auth { .. }
+            | Message::AuthOk { .. }
+            | Message::AuthInvalid { .. } => false,
+            Message::CallService { id, .. } | Message::Result { id, .. } => {
+                *id = new_id;
+
+                true
+            }
+        }
+    }
 }

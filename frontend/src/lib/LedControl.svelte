@@ -8,19 +8,24 @@
 		return await (await fetch(ledPath)).json();
 	}
 
-	function setLedStatus(status) {
-		fetch(ledPath, {
-			method: 'POST',
-			headers: { Accept: 'Application/json', 'Content-Type': 'application/json' },
-			body: JSON.stringify(status)
-		})
-			.then((res) => res.json())
-			.then((status: boolean) => {
-				ledStatus = Promise.resolve(status);
-			})
-			.catch((error) => {
-				console.error(error);
+	async function setLedStatus(status) {
+		try {
+			const res = await fetch(ledPath, {
+				method: 'POST',
+				headers: { Accept: 'Application/json', 'Content-Type': 'application/json' },
+				body: JSON.stringify(status)
 			});
+
+			if (res.headers.get('content-type') == 'application/json') {
+				const status = await res.json();
+
+				ledStatus = Promise.resolve(status);
+			} else {
+				console.error(await res.text());
+			}
+		} catch (err) {
+			console.error(err);
+		}
 	}
 </script>
 
