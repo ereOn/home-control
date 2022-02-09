@@ -9,6 +9,7 @@ const DEFAULT_TRIGGER_PIN: &str = "24";
 const DEFAULT_ECHO_PIN: &str = "23";
 
 pub struct Config {
+    pub debug: bool,
     pub listen_endpoint: SocketAddr,
     pub reverse_proxy_url: Option<String>,
     pub gpio_config: GpioConfig,
@@ -27,6 +28,10 @@ pub struct GpioConfig {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    /// Enables debug output.
+    #[clap(long, short)]
+    pub debug: bool,
+
     #[clap(
         value_name = "HOME_ASSISTANT_ENDPOINT",
         env,
@@ -95,6 +100,7 @@ impl Config {
         let args = Args::try_parse()?;
 
         Ok(Self {
+            debug: args.debug,
             home_assistant_endpoint: args.home_assistant_endpoint,
             home_assistant_token: args.home_assistant_token,
             listen_endpoint: args.listen_endpoint,

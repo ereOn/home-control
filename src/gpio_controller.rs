@@ -27,7 +27,7 @@ pub enum GpioPin {
 }
 
 impl GpioPin {
-    fn to_pin_number(self, config: &GpioConfig) -> u8 {
+    fn into_pin_number(self, config: &GpioConfig) -> u8 {
         match self {
             GpioPin::RedLed => config.red_led_pin,
             GpioPin::GreenLed => config.green_led_pin,
@@ -59,13 +59,13 @@ impl GpioController {
     }
 
     pub fn get_output_pin_status(&self, pin: GpioPin) -> anyhow::Result<bool> {
-        let pin = self.get_output_pin(pin.to_pin_number(&self.config))?;
+        let pin = self.get_output_pin(pin.into_pin_number(&self.config))?;
 
         Ok(pin.is_set_high())
     }
 
     pub fn set_output_pin_status(&self, pin: GpioPin, status: bool) -> anyhow::Result<()> {
-        let pin = pin.to_pin_number(&self.config);
+        let pin = pin.into_pin_number(&self.config);
         let status: bool = status.into();
 
         info!("Setting pin {} to {}", pin, status);
@@ -93,7 +93,7 @@ impl GpioController {
     }
 
     pub fn get_output_pin_status(&self, pin: GpioPin) -> anyhow::Result<bool> {
-        let pin = pin.to_pin_number(&self.config);
+        let pin = pin.into_pin_number(&self.config);
 
         match self.gpio.lock() {
             Ok(gpio) => Ok(gpio.get(&pin).cloned().unwrap_or(false)),
@@ -104,7 +104,7 @@ impl GpioController {
     pub fn set_output_pin_status(&self, pin: GpioPin, status: bool) -> anyhow::Result<()> {
         match self.gpio.lock() {
             Ok(mut gpio) => {
-                let pin = pin.to_pin_number(&self.config);
+                let pin = pin.into_pin_number(&self.config);
 
                 info!("Setting pin {} to {}", pin, status);
 

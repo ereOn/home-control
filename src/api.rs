@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use log::info;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use warp::{Filter, Rejection, Reply};
 
 use crate::{
@@ -89,7 +89,7 @@ impl Api {
         let api_red_led_set = api_red_led
             .and(warp::post())
             .and(warp::body::content_length_limit(8))
-            .and(api_filter.clone())
+            .and(api_filter)
             .and(warp::body::json())
             .and_then(Self::api_red_led_set);
 
@@ -135,13 +135,16 @@ impl Api {
             .set_output_pin_status(GpioPin::GreenLed, status)
             .map_err(|_| warp::reject::reject())?;
 
+        let duration = self
+            .ha_controller
+            .ping()
+            .await
+            .map_err(warp::reject::custom)?;
+
+        info!("ping duration: {}ms", duration.as_millis());
+
         self.ha_controller
-            .call_service(
-                "light",
-                "toggle",
-                Some(&json!({})),
-                Some(&json!({"entity_id": "light.pool"})),
-            )
+            .light_toggle("light.sapin")
             .await
             .map_err(warp::reject::custom)?;
 

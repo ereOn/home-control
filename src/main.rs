@@ -11,14 +11,15 @@ struct Data;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    home_control::log::init();
     let config = home_control::config::Config::new()?;
+    home_control::log::init(config.debug);
 
     info!("Home-control, version {}", env!("CARGO_PKG_VERSION"));
 
     let ha_client =
         Client::new(&config.home_assistant_endpoint, config.home_assistant_token).await?;
     let ha_controller = ha_client.new_controller();
+
     let api = Api::new(config.gpio_config, ha_controller)?;
     let routes = api.routes();
 
