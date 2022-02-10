@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
-use log::{debug, info};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use warp::{Filter, Rejection, Reply};
 
@@ -45,12 +45,29 @@ impl Api {
     pub async fn run(&self) -> anyhow::Result<()> {
         info!("API loop started.");
 
+        info!("Subscribing to Home Assistant events.");
+
+        self.ha_controller
+            .subscribe_events(Some("state_changed"))
+            .await?;
+
+        let mut last_ping = std::time::Instant::now();
+
         loop {
-            let duration = self.ha_controller.ping().await?;
+            tokio::select! {
+                r = self.ha_controller.ping(), if last_ping.elapsed() > Duration::from_secs(10) => {
+                    last_ping = std::time::Instant::now();
 
-            debug!("Latency with Home Assistant: {}ms", duration.as_millis());
-
-            tokio::time::sleep(Duration::from_secs(10)).await;
+                    match r {
+                        Ok(duration) => debug!("Latency with Home Assistant: {}ms", duration.as_millis()),
+                        Err(err) => warn!("Failed to ping Home Assistant: {}", err),
+                    }
+                },
+                r = self.ha_controller.wait_for_event() => match r {
+                    Ok(event) => info!("Received event from Home Assistant: {}", event),
+                    Err(err) => warn!("Failed to receiv event from Home Assistant: {}", err),
+                }
+            }
 
             self.ha_controller.light_toggle("light.sapin").await?;
         }

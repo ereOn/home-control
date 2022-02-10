@@ -32,10 +32,13 @@ pub struct Client {
     access_token: String,
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
     rx: tokio::sync::mpsc::Receiver<MessageAndSender>,
+    events_tx: tokio::sync::broadcast::Sender<Event>,
+    _events_rx: tokio::sync::broadcast::Receiver<Event>,
 }
 
 pub struct Controller {
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
+    events_rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<Event>>,
 }
 
 impl Client {
@@ -50,12 +53,15 @@ impl Client {
             .context("failed to connect to Home-Assistant Web-Socket endpoint")?;
 
         let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let (events_tx, _events_rx) = tokio::sync::broadcast::channel(128);
 
         Ok(Self {
             ws: Box::new(ws),
             access_token,
             tx,
             rx,
+            events_tx,
+            _events_rx,
         })
     }
 
@@ -63,6 +69,7 @@ impl Client {
     pub fn new_controller(&self) -> Controller {
         Controller {
             tx: self.tx.clone(),
+            events_rx: tokio::sync::Mutex::new(self.events_tx.subscribe()),
         }
     }
 
@@ -132,6 +139,13 @@ impl Client {
                         } else {
                             warn!("Discarding pong for unknown id: {}", id);
                         }
+                    }
+                    Message::Event { id, event } => {
+                        debug!("Received event {}: {}", id, event);
+
+                        self.events_tx
+                            .send(event)
+                            .context("failed to send event")?;
                     }
                     message => {
                         warn!(
@@ -293,6 +307,16 @@ impl Controller {
 
         Ok(())
     }
+
+    pub async fn wait_for_event(&self) -> Result<Event> {
+        self.events_rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .context("failed to receive event")
+            .map_err(Into::into)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -338,7 +362,13 @@ enum Message {
     Pong {
         id: u64,
     },
+    Event {
+        id: u64,
+        event: Event,
+    },
 }
+
+type Event = serde_json::Value;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Error {
@@ -375,7 +405,8 @@ impl Message {
             | Self::SubscribeEvents { id, .. }
             | Self::SubscribeTrigger { id, .. }
             | Self::Ping { id }
-            | Self::Pong { id } => {
+            | Self::Pong { id }
+            | Self::Event { id, .. } => {
                 *id = new_id;
 
                 true
