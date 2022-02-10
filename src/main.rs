@@ -30,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
         );
 
         tokio::select! {
+            r = api.run() => r?,
             r = ha_client.run() => r?,
             _ = warp::serve(routes.or(reverse_proxy_filter("".to_string(), reverse_proxy_url)))
                 .run(config.listen_endpoint) => {},
@@ -38,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
         info!("Serving static files.",);
 
         tokio::select! {
+            r = api.run() => r?,
             r = ha_client.run() => r?,
             _ = warp::serve(routes.or(warp_embed::embed(&Data)))
                 .run(config.listen_endpoint) => {},

@@ -72,17 +72,18 @@ impl Client {
         let mut ws = self.ws;
         let mut id: u64 = 1;
         let mut senders_by_id = HashMap::new();
+        let mut authenticated = false;
 
         loop {
             tokio::select! {
-                pair = rx.recv() =>
+                pair = rx.recv(), if authenticated =>
                     if let Some((mut message, sender)) = pair {
                         if message.inject_id(id) {
                             senders_by_id.insert(id, sender);
                             id += 1;
 
-                        debug!("Sending message: {:?}", message);
-                        Self::send_message(&mut ws, message).await?;
+                            debug!("Sending message: {:?}", message);
+                            Self::send_message(&mut ws, message).await?;
                         } else {
                             warn!("Failed to inject message ID: not sending message: {:?}", message);
                         }
@@ -102,6 +103,7 @@ impl Client {
                         .await?;
                     }
                     Message::AuthOk { ha_version } => {
+                        authenticated = true;
                         info!("Authenticated with Home-Assistant version {}", ha_version);
                     }
                     Message::AuthInvalid { message } => {

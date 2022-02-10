@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
-use log::info;
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use warp::{Filter, Rejection, Reply};
 
@@ -40,6 +40,20 @@ impl Api {
             gpio_controller: gpio,
             ha_controller,
         }))
+    }
+
+    pub async fn run(&self) -> anyhow::Result<()> {
+        info!("API loop started.");
+
+        loop {
+            let duration = self.ha_controller.ping().await?;
+
+            debug!("Latency with Home Assistant: {}ms", duration.as_millis());
+
+            tokio::time::sleep(Duration::from_secs(10)).await;
+
+            self.ha_controller.light_toggle("light.sapin").await?;
+        }
     }
 
     pub fn routes(
@@ -134,19 +148,6 @@ impl Api {
         self.gpio_controller
             .set_output_pin_status(GpioPin::GreenLed, status)
             .map_err(|_| warp::reject::reject())?;
-
-        let duration = self
-            .ha_controller
-            .ping()
-            .await
-            .map_err(warp::reject::custom)?;
-
-        info!("ping duration: {}ms", duration.as_millis());
-
-        self.ha_controller
-            .light_toggle("light.sapin")
-            .await
-            .map_err(warp::reject::custom)?;
 
         Ok(warp::reply::json(&status))
     }
