@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Display, time::Duration};
 
 use anyhow::Context;
+use chrono::{DateTime, Utc};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
@@ -141,11 +142,14 @@ impl Client {
                         }
                     }
                     Message::Event { id, event } => {
-                        debug!("Received event {}: {}", id, event);
+                        debug!("Received event {}: {:?}", id, event);
 
-                        self.events_tx
-                            .send(event)
-                            .context("failed to send event")?;
+                        match serde_json::from_value(event).context("failed to parse event") {
+                            Ok(event) => self.events_tx
+                                .send(event)
+                                .context("failed to send event").map(|_| ())?,
+                            Err(err) => warn!("Failed to parse event: {}", err),
+                        };
                     }
                     message => {
                         warn!(
@@ -364,11 +368,9 @@ enum Message {
     },
     Event {
         id: u64,
-        event: Event,
+        event: serde_json::Value,
     },
 }
-
-type Event = serde_json::Value;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Error {
@@ -413,4 +415,15 @@ impl Message {
             }
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "event_type", rename_all = "snake_case")]
+pub enum Event {
+    StateChanged {
+        context: serde_json::Value,
+        data: serde_json::Value,
+        origin: String,
+        time_fired: DateTime<Utc>,
+    },
 }

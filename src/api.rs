@@ -64,7 +64,14 @@ impl Api {
                     }
                 },
                 r = self.ha_controller.wait_for_event() => match r {
-                    Ok(event) => info!("Received event from Home Assistant: {}", event),
+                    Ok(event) => {
+                        debug!("Received event from Home Assistant: {:?}", event);
+
+                        tokio::fs::write(
+                            "./home_assistant_event.json",
+                            serde_json::to_string(&event).unwrap(),
+                        ).await?;
+                    }
                     Err(err) => warn!("Failed to receiv event from Home Assistant: {}", err),
                 }
             }
