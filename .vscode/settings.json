@@ -1,4 +1,7 @@
 {
     "rust-analyzer.checkOnSave.command": "clippy",
-    "editor.defaultFormatter": "matklad.rust-analyzer"
+    "editor.defaultFormatter": "matklad.rust-analyzer",
+    "[svelte]": {
+        "editor.defaultFormatter": "svelte.svelte-vscode"
+    }
 }

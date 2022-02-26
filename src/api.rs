@@ -72,11 +72,9 @@ impl Api {
                             serde_json::to_string(&event).unwrap(),
                         ).await?;
                     }
-                    Err(err) => warn!("Failed to receiv event from Home Assistant: {}", err),
+                    Err(err) => warn!("Failed to receive event from Home Assistant: {}", err),
                 }
             }
-
-            self.ha_controller.light_toggle("light.sapin").await?;
         }
     }
 
@@ -127,9 +125,14 @@ impl Api {
         let api_red_led_set = api_red_led
             .and(warp::post())
             .and(warp::body::content_length_limit(8))
-            .and(api_filter)
+            .and(api_filter.clone())
             .and(warp::body::json())
             .and_then(Self::api_red_led_set);
+
+        let api_alarm = warp::path!("api" / "v1" / "alarm")
+            .and(warp::get())
+            .and(api_filter)
+            .and_then(Self::api_alarm_get);
 
         // Final path organization.
         api_red_led_get
@@ -138,6 +141,7 @@ impl Api {
             .or(api_green_led_set)
             .or(api_buzzer_get)
             .or(api_buzzer_set)
+            .or(api_alarm)
     }
 
     async fn api_buzzer_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
@@ -190,6 +194,17 @@ impl Api {
         self.gpio_controller
             .set_output_pin_status(GpioPin::RedLed, status)
             .map_err(|_| warp::reject::reject())?;
+
+        Ok(warp::reply::json(&status))
+    }
+
+    async fn api_alarm_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
+        // TODO: Implement.
+        //let status = self
+        //    .ha_controller
+        //    .get_light(GpioPin::RedLed)
+        //    .map_err(|_| warp::reject::reject())?;
+        let status = true;
 
         Ok(warp::reply::json(&status))
     }
