@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display, time::Duration};
 
-use anyhow::Context;
+use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use log::{debug, info, warn};
@@ -33,13 +33,13 @@ pub struct Client {
     access_token: String,
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
     rx: tokio::sync::mpsc::Receiver<MessageAndSender>,
-    events_tx: tokio::sync::broadcast::Sender<Event>,
-    _events_rx: tokio::sync::broadcast::Receiver<Event>,
+    events_tx: tokio::sync::broadcast::Sender<Box<Event>>,
+    _events_rx: tokio::sync::broadcast::Receiver<Box<Event>>,
 }
 
 pub struct Controller {
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
-    events_rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<Event>>,
+    events_rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<Box<Event>>>,
 }
 
 impl Client {
@@ -142,14 +142,11 @@ impl Client {
                         }
                     }
                     Message::Event { id, event } => {
-                        debug!("Received event {}: {:?}", id, event);
+                        debug!("Received event {}: {}", id, event);
 
-                        match serde_json::from_value(event).context("failed to parse event") {
-                            Ok(event) => self.events_tx
-                                .send(event)
-                                .context("failed to send event").map(|_| ())?,
-                            Err(err) => warn!("Failed to parse event: {}", err),
-                        };
+                        self.events_tx
+                            .send(event)
+                            .context("failed to send event").map(|_| ())?;
                     }
                     message => {
                         warn!(
@@ -272,6 +269,16 @@ impl Controller {
         .await
     }
 
+    pub async fn light_set(&self, entity_id: &str, status: bool) -> Result<()> {
+        self.call_service(
+            "light",
+            if status { "turn_on" } else { "turn_off" },
+            Some(&json!({})),
+            Some(&json!({ "entity_id": entity_id })),
+        )
+        .await
+    }
+
     pub async fn subscribe_events(&self, event_type: Option<&str>) -> Result<()> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
 
@@ -312,7 +319,7 @@ impl Controller {
         Ok(())
     }
 
-    pub async fn wait_for_event(&self) -> Result<Event> {
+    pub async fn wait_for_event(&self) -> Result<Box<Event>> {
         self.events_rx
             .lock()
             .await
@@ -368,7 +375,7 @@ enum Message {
     },
     Event {
         id: u64,
-        event: serde_json::Value,
+        event: Box<Event>,
     },
 }
 
@@ -421,9 +428,64 @@ impl Message {
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum Event {
     StateChanged {
-        context: serde_json::Value,
-        data: serde_json::Value,
+        context: Context,
+        data: StateChangedData,
         origin: String,
         time_fired: DateTime<Utc>,
     },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Context {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub user_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StateChangedData {
+    pub entity_id: String,
+    pub old_state: Option<State>,
+    pub new_state: Option<State>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct State {
+    pub entity_id: String,
+    pub attributes: serde_json::Value,
+    pub context: Context,
+    pub last_changed: DateTime<Utc>,
+    pub last_updated: DateTime<Utc>,
+    pub state: String,
+}
+
+impl Display for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            Self::StateChanged {
+                context: _,
+                data,
+                origin: _,
+                time_fired: _,
+            } => write!(
+                f,
+                "{}: {} -> {}",
+                data.entity_id,
+                data.old_state
+                    .as_ref()
+                    .map(|s| s.state.as_str())
+                    .unwrap_or_default(),
+                data.new_state
+                    .as_ref()
+                    .map(|s| s.state.as_str())
+                    .unwrap_or_default(),
+            ),
+        }
+    }
+}
+
+impl State {
+    pub fn as_bool(&self) -> bool {
+        matches!(self.state.as_str(), "on" | "1" | "true")
+    }
 }

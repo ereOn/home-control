@@ -1,14 +1,15 @@
 <script>
-	import Icon from '@iconify/svelte';
+	import SidebarButton from './SidebarButton.svelte';
+	import SidebarLightButton from './SidebarLightButton.svelte';
 </script>
 
 <div id="sidebar">
-	<button><Icon icon="noto:pool-8-ball" style="font-size: 48px" /></button>
-	<button><Icon icon="noto:books" style="font-size: 48px" /></button>
+	<SidebarLightButton icon="noto:pool-8-ball" name="pool" />
+	<SidebarLightButton icon="noto:books" name="reading" />
 	<div class="separator" />
-	<button><Icon icon="emojione:film-projector" style="font-size: 48px" /></button>
+	<SidebarButton icon="emojione:film-projector" />
 	<div class="filler" />
-	<button><Icon icon="emojione:bed" style="font-size: 48px" /></button>
+	<SidebarButton icon="emojione:bed" />
 </div>
 
 <style lang="scss">
@@ -29,30 +30,6 @@
 		}
 		div.filler {
 			flex: 1;
-		}
-
-		button {
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			border: none;
-			border-radius: 8px;
-			background-color: var(--button-background-color-off);
-			background: radial-gradient(
-				ellipse at center,
-				white 20%,
-				var(--button-background-center-color-off) 100%
-			);
-			color: var(--button-text-color);
-			height: 80px;
-			width: 80px;
-			font-weight: 800;
-			font-size: 120%;
-			user-select: none;
-
-			&:active {
-				filter: brightness(0.8);
-			}
 		}
 	}
 </style>

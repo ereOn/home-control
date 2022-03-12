@@ -1,19 +1,21 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use warp::{Filter, Rejection, Reply};
 
 use crate::{
     config::GpioConfig,
     gpio_controller::{GpioController, GpioPin},
-    home_assistant::Controller,
+    home_assistant::{Controller, Event},
 };
 
 pub struct Api {
     gpio_controller: GpioController,
     ha_controller: Controller,
+    light_states: Mutex<BTreeMap<String, bool>>,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
@@ -39,6 +41,7 @@ impl Api {
         Ok(Arc::new(Self {
             gpio_controller: gpio,
             ha_controller,
+            light_states: Mutex::new(BTreeMap::new()),
         }))
     }
 
@@ -65,12 +68,19 @@ impl Api {
                 },
                 r = self.ha_controller.wait_for_event() => match r {
                     Ok(event) => {
-                        debug!("Received event from Home Assistant: {:?}", event);
-
-                        tokio::fs::write(
-                            "./home_assistant_event.json",
-                            serde_json::to_string(&event).unwrap(),
-                        ).await?;
+                        match *event {
+                            Event::StateChanged{data, .. } => {
+                                match data.entity_id.split_once('.') {
+                                    Some(("light", name)) => {
+                                        if let Some(state) = data.new_state {
+                                            info!("Saving new status for light {}: {}", name, state.as_bool());
+                                            self.light_states.lock().await.insert(name.to_string(), state.as_bool());
+                                        }
+                                    }
+                                    Some(_) | None => {}
+                                }
+                            }
+                        }
                     }
                     Err(err) => warn!("Failed to receive event from Home Assistant: {}", err),
                 }
@@ -131,8 +141,25 @@ impl Api {
 
         let api_alarm = warp::path!("api" / "v1" / "alarm")
             .and(warp::get())
-            .and(api_filter)
+            .and(api_filter.clone())
             .and_then(Self::api_alarm_get);
+
+        // Light control.
+        let api_light = warp::path!("api" / "v1" / "light" / String);
+
+        let api_light_get = api_light
+            .and(warp::get())
+            .and(api_filter.clone())
+            .and_then(|name, api: Arc<Api>| async move { api.api_light_get(name).await });
+
+        let api_light_set = api_light
+            .and(warp::post())
+            .and(warp::body::content_length_limit(8))
+            .and(api_filter)
+            .and(warp::body::json())
+            .and_then(|light: String, api: Arc<Api>, status| async move {
+                Self::api_light_set(api, light, status).await
+            });
 
         // Final path organization.
         api_red_led_get
@@ -142,6 +169,8 @@ impl Api {
             .or(api_buzzer_get)
             .or(api_buzzer_set)
             .or(api_alarm)
+            .or(api_light_get)
+            .or(api_light_set)
     }
 
     async fn api_buzzer_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
@@ -205,6 +234,32 @@ impl Api {
         //    .get_light(GpioPin::RedLed)
         //    .map_err(|_| warp::reject::reject())?;
         let status = true;
+
+        Ok(warp::reply::json(&status))
+    }
+
+    async fn api_light_get(self: Arc<Self>, light: String) -> Result<impl Reply, Rejection> {
+        let status = self
+            .light_states
+            .lock()
+            .await
+            .get(&light)
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(warp::reply::json(&status))
+    }
+
+    async fn api_light_set(
+        self: Arc<Self>,
+        light: String,
+        status: ApiBool,
+    ) -> Result<impl Reply, Rejection> {
+        let status: bool = status.into();
+        self.ha_controller
+            .light_set(&format!("light.{}", light), status)
+            .await
+            .map_err(warp::reject::custom)?;
 
         Ok(warp::reply::json(&status))
     }
