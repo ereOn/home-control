@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Display, time::Duration};
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::time::Instant;
@@ -29,8 +29,8 @@ type Sender = tokio::sync::oneshot::Sender<Result<serde_json::Value>>;
 type MessageAndSender = (Message, Sender);
 
 pub struct Client {
-    ws: Box<dyn WebSocket>,
     access_token: String,
+    ws_url: Url,
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
     rx: tokio::sync::mpsc::Receiver<MessageAndSender>,
     events_tx: tokio::sync::broadcast::Sender<Box<Event>>,
@@ -44,21 +44,19 @@ pub struct Controller {
 
 impl Client {
     pub async fn new(endpoint: &str, access_token: String) -> Result<Self> {
-        let url = Url::parse(&format!("wss://{}/api/websocket", endpoint))
+        info!("Using Home-Assistant instance at: {}", endpoint);
+
+        let ws_url = Url::parse(&format!("wss://{}/api/websocket", endpoint))
             .context("failed to parse home-assistant endpoint")?;
 
-        info!("Connecting to Home-Assistant instance at: {}", endpoint);
-
-        let (ws, _) = connect_async(url)
-            .await
-            .context("failed to connect to Home-Assistant Web-Socket endpoint")?;
+        info!("Will establish Home-Assistant web-socket at: {}", ws_url);
 
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let (events_tx, _events_rx) = tokio::sync::broadcast::channel(128);
 
         Ok(Self {
-            ws: Box::new(ws),
             access_token,
+            ws_url,
             tx,
             rx,
             events_tx,
@@ -75,16 +73,37 @@ impl Client {
     }
 
     /// Run the client and consumes it.
-    pub async fn run(self) -> Result<()> {
-        let mut rx = self.rx;
-        let mut ws = self.ws;
+    pub async fn run(mut self) -> Result<()> {
+        let retry_delay = Duration::from_secs(5);
+
+        loop {
+            match connect_async(&self.ws_url).await {
+                Err(err) => {
+                    error!("Failed to establish web-socket to Home-Assistant: {}", err);
+                    error!("Next attempt in {:.2}s...", retry_delay.as_secs());
+
+                    tokio::time::sleep(retry_delay).await;
+                }
+                Ok((ws, _)) => {
+                    if let Err(err) = self.run_with_ws(ws).await {
+                        warn!(
+                            "Home-Assistant web-socket connection was interuppted: {}",
+                            err
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    async fn run_with_ws(&mut self, mut ws: impl WebSocket) -> Result<()> {
+        let mut authenticated = false;
         let mut id: u64 = 1;
         let mut senders_by_id = HashMap::new();
-        let mut authenticated = false;
 
         loop {
             tokio::select! {
-                pair = rx.recv(), if authenticated =>
+                pair = self.rx.recv(), if authenticated =>
                     if let Some((mut message, sender)) = pair {
                         if message.inject_id(id) {
                             senders_by_id.insert(id, sender);
@@ -176,17 +195,25 @@ impl Client {
                             .map_err::<anyhow::Error, _>(Into::into)?;
                         continue;
                     }
+                    WsMessage::Close(Some(frame)) => {
+                        return Err(anyhow::anyhow!(
+                            "Home-Assistant web-socket closed with code {}: {}",
+                            frame.code,
+                            frame.reason
+                        ))
+                        .map_err(Into::into);
+                    }
                     _ => Err(anyhow::anyhow!(
-                        "unexpected Web-Socket message: {:?}",
+                        "unexpected Home-Assistant web-socket message: {:?}",
                         message
                     ))
                     .map_err(Into::into),
                 },
                 Some(Err(err)) => Err(err)
-                    .context("failed to read the Web-Socket message")
+                    .context("failed to read the web-socket message")
                     .map_err(Into::into),
                 None => Err(anyhow::anyhow!(
-                    "the stream closed while waiting for the first Web-Socket message"
+                    "the stream closed while waiting for the first web-socket message from Home-Assistant"
                 ))
                 .map_err(Into::into),
             };
