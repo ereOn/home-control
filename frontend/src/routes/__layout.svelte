@@ -1,14 +1,15 @@
 <script lang="ts">
-	import Header from '$lib/Header.svelte';
 	import Sidebar from '$lib/Sidebar.svelte';
 	import '../app.css';
+
+	let weather = 'rainy';
 </script>
 
-<main>
+<main class={weather}>
 	<div id="content">
-		<Header />
 		<slot />
 	</div>
+
 	<Sidebar />
 </main>
 
@@ -24,16 +25,30 @@
 		height: 100%;
 		justify-content: space-between;
 		align-items: stretch;
+		color: white;
+		background-position: center 25%;
+		background-repeat: no-repeat;
+		background-size: cover;
 	}
 
 	main > div#content {
 		flex: 1;
-		padding: 0;
-		margin: 0;
-		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		justify-items: flex-end;
+		margin: 16px;
 	}
 
-	main > div#content > slot {
-		flex: 1;
+	main.rainy {
+		background-image: url('/static/backgrounds/weather/rainy.jpg');
+	}
+
+	main.sunny {
+		background-image: url('/static/backgrounds/weather/sunny.jpg');
+	}
+
+	main.cloudy {
+		background-image: url('/static/backgrounds/weather/cloudy.jpg');
 	}
 </style>
