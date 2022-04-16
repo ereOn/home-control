@@ -41,14 +41,14 @@
 	}
 
 	main.rainy {
-		background-image: url('/static/backgrounds/weather/rainy.jpg');
+		background-image: url('/backgrounds/weather/rainy.jpg');
 	}
 
 	main.sunny {
-		background-image: url('/static/backgrounds/weather/sunny.jpg');
+		background-image: url('/backgrounds/weather/sunny.jpg');
 	}
 
 	main.cloudy {
-		background-image: url('/static/backgrounds/weather/cloudy.jpg');
+		background-image: url('/backgrounds/weather/cloudy.jpg');
 	}
 </style>
