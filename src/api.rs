@@ -50,10 +50,6 @@ impl Api {
 
         info!("Subscribing to Home Assistant events.");
 
-        self.ha_controller
-            .subscribe_events(Some("state_changed"))
-            .await?;
-
         let mut last_ping = std::time::Instant::now();
 
         loop {

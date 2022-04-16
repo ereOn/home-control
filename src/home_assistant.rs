@@ -31,6 +31,7 @@ type MessageAndSender = (Message, Sender);
 pub struct Client {
     access_token: String,
     ws_url: Url,
+    events_subscription: EventsSubscription,
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
     rx: tokio::sync::mpsc::Receiver<MessageAndSender>,
     events_tx: tokio::sync::broadcast::Sender<Box<Event>>,
@@ -42,8 +43,29 @@ pub struct Controller {
     events_rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<Box<Event>>>,
 }
 
+#[derive(Clone)]
+pub enum EventsSubscription {
+    All,
+    Specific(Vec<String>),
+}
+
+impl EventsSubscription {
+    fn to_event_types(&self) -> Vec<Option<String>> {
+        match self {
+            Self::All => vec![None],
+            Self::Specific(event_types) => {
+                event_types.iter().map(|s| Some(s.to_string())).collect()
+            }
+        }
+    }
+}
+
 impl Client {
-    pub async fn new(endpoint: &str, access_token: String) -> Result<Self> {
+    pub async fn new(
+        endpoint: &str,
+        access_token: String,
+        events_subscription: EventsSubscription,
+    ) -> Result<Self> {
         info!("Using Home-Assistant instance at: {}", endpoint);
 
         let ws_url = Url::parse(&format!("wss://{}/api/websocket", endpoint))
@@ -57,11 +79,56 @@ impl Client {
         Ok(Self {
             access_token,
             ws_url,
+            events_subscription,
             tx,
             rx,
             events_tx,
             _events_rx,
         })
+    }
+
+    async fn subscribe_to_events(
+        tx: &mut tokio::sync::mpsc::Sender<MessageAndSender>,
+        event_types: Vec<Option<String>>,
+    ) -> Result<()> {
+        info!("Subscribing to Home-Assistant events...");
+
+        for event_type in event_types {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            tx.send((Message::SubscribeEvents { id: 0, event_type }, sender))
+                .await
+                .context("failed to send the subscribe events message")?;
+
+            let result = receiver
+                .await
+                .context("failed to receive the subscribe events response")??;
+
+            debug!("Subscribe events result: {:?}", result);
+        }
+
+        info!("Subscribed to Home-Assistant events.");
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        Ok(())
+    }
+
+    async fn subscribe_to_trigger(
+        tx: &mut tokio::sync::mpsc::Sender<MessageAndSender>,
+        trigger: serde_json::Value,
+    ) -> Result<()> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+
+        tx.send((Message::SubscribeTrigger { id: 0, trigger }, sender))
+            .await
+            .context("failed to send the subscribe trigger message")?;
+
+        let result = receiver
+            .await
+            .context("failed to receive the subscribe trigger response")??;
+
+        debug!("Subscribe trigger result: {:?}", result);
+
+        Ok(())
     }
 
     /// Get a new controller on the client.
@@ -98,12 +165,22 @@ impl Client {
 
     async fn run_with_ws(&mut self, mut ws: impl WebSocket) -> Result<()> {
         let mut authenticated = false;
+        let event_types = self.events_subscription.to_event_types();
+        let mut subscribed_to_events = event_types.is_empty();
         let mut id: u64 = 1;
         let mut senders_by_id = HashMap::new();
+        let tx = &mut self.tx;
+        let rx = &mut self.rx;
+
+        let subscription = Self::subscribe_to_events(tx, event_types.clone());
+        tokio::pin!(subscription);
 
         loop {
             tokio::select! {
-                pair = self.rx.recv(), if authenticated =>
+                _ = &mut subscription, if authenticated && !subscribed_to_events => {
+                    subscribed_to_events = true;
+                }
+                pair = rx.recv(), if authenticated =>
                     if let Some((mut message, sender)) = pair {
                         if message.inject_id(id) {
                             senders_by_id.insert(id, sender);
@@ -306,46 +383,11 @@ impl Controller {
         .await
     }
 
-    pub async fn subscribe_events(&self, event_type: Option<&str>) -> Result<()> {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-
-        self.tx
-            .send((
-                Message::SubscribeEvents {
-                    id: 0,
-                    event_type: event_type.map(ToString::to_string),
-                },
-                sender,
-            ))
-            .await
-            .context("failed to send the subscribe events message")?;
-
-        let result = receiver
-            .await
-            .context("failed to receive the subscribe events response")??;
-
-        debug!("Subscribe events result: {:?}", result);
-
-        Ok(())
-    }
-
-    pub async fn subscribe_trigger(&self, trigger: serde_json::Value) -> Result<()> {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-
-        self.tx
-            .send((Message::SubscribeTrigger { id: 0, trigger }, sender))
-            .await
-            .context("failed to send the subscribe trigger message")?;
-
-        let result = receiver
-            .await
-            .context("failed to receive the subscribe trigger response")??;
-
-        debug!("Subscribe trigger result: {:?}", result);
-
-        Ok(())
-    }
-
+    /// Wait for the next event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the event stream closed.
     pub async fn wait_for_event(&self) -> Result<Box<Event>> {
         self.events_rx
             .lock()

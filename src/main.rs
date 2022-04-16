@@ -1,6 +1,9 @@
 use log::info;
 
-use home_control::{api::Api, home_assistant::Client};
+use home_control::{
+    api::Api,
+    home_assistant::{self, Client},
+};
 use rust_embed::RustEmbed;
 use warp::Filter;
 use warp_reverse_proxy::reverse_proxy_filter;
@@ -16,8 +19,15 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Home-control, version {}", env!("CARGO_PKG_VERSION"));
 
-    let ha_client =
-        Client::new(&config.home_assistant_endpoint, config.home_assistant_token).await?;
+    let events_subscription =
+        home_assistant::EventsSubscription::Specific(vec!["state_changed".to_string()]);
+
+    let ha_client = Client::new(
+        &config.home_assistant_endpoint,
+        config.home_assistant_token,
+        events_subscription,
+    )
+    .await?;
     let ha_controller = ha_client.new_controller();
 
     let api = Api::new(config.gpio_config, ha_controller)?;
