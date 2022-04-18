@@ -1,17 +1,20 @@
 <script lang="ts">
 	import Sidebar from '$lib/Sidebar.svelte';
+	import Connectivity from '$lib/Connectivity.svelte';
 	import '../app.css';
 
 	let weather = 'rainy';
 </script>
 
-<main class={weather}>
-	<div id="content">
-		<slot />
-	</div>
+<Connectivity>
+	<main class={weather}>
+		<div id="content">
+			<slot />
+		</div>
 
-	<Sidebar />
-</main>
+		<Sidebar />
+	</main>
+</Connectivity>
 
 <style>
 	main {
@@ -20,9 +23,9 @@
 		flex-direction: row;
 		padding: 0;
 		width: 100%;
+		height: 100%;
 		margin: 0 auto;
 		box-sizing: border-box;
-		height: 100%;
 		justify-content: space-between;
 		align-items: stretch;
 		color: white;
@@ -37,6 +40,7 @@
 		flex-direction: column;
 		align-items: flex-start;
 		justify-items: flex-end;
+		justify-content: flex-end;
 		margin: 16px;
 	}
 

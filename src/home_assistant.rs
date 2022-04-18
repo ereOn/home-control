@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, time::Duration};
+use std::{collections::HashMap, fmt::Display, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
@@ -6,7 +6,7 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::time::Instant;
+use tokio::{sync::RwLock, time::Instant};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Error as WsError, Message as WsMessage},
@@ -28,6 +28,13 @@ impl<T> WebSocket for T where
 type Sender = tokio::sync::oneshot::Sender<Result<serde_json::Value>>;
 type MessageAndSender = (Message, Sender);
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientStatus {
+    Connected,
+    Disconnected,
+}
+
 pub struct Client {
     access_token: String,
     ws_url: Url,
@@ -36,11 +43,13 @@ pub struct Client {
     rx: tokio::sync::mpsc::Receiver<MessageAndSender>,
     events_tx: tokio::sync::broadcast::Sender<Box<Event>>,
     _events_rx: tokio::sync::broadcast::Receiver<Box<Event>>,
+    status: Arc<RwLock<ClientStatus>>,
 }
 
 pub struct Controller {
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
     events_rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<Box<Event>>>,
+    status: Arc<RwLock<ClientStatus>>,
 }
 
 #[derive(Clone)]
@@ -84,6 +93,7 @@ impl Client {
             rx,
             events_tx,
             _events_rx,
+            status: Arc::new(RwLock::new(ClientStatus::Disconnected)),
         })
     }
 
@@ -136,6 +146,7 @@ impl Client {
         Controller {
             tx: self.tx.clone(),
             events_rx: tokio::sync::Mutex::new(self.events_tx.subscribe()),
+            status: Arc::clone(&self.status),
         }
     }
 
@@ -153,6 +164,8 @@ impl Client {
                 }
                 Ok((ws, _)) => {
                     if let Err(err) = self.run_with_ws(ws).await {
+                        *self.status.write().await = ClientStatus::Disconnected;
+
                         warn!(
                             "Home-Assistant web-socket connection was interuppted: {}",
                             err
@@ -179,6 +192,7 @@ impl Client {
             tokio::select! {
                 _ = &mut subscription, if authenticated && !subscribed_to_events => {
                     subscribed_to_events = true;
+                    *self.status.write().await = ClientStatus::Connected;
                 }
                 pair = rx.recv(), if authenticated =>
                     if let Some((mut message, sender)) = pair {
@@ -310,6 +324,10 @@ impl Client {
 }
 
 impl Controller {
+    pub async fn status(&self) -> ClientStatus {
+        *self.status.read().await
+    }
+
     pub async fn ping(&self) -> Result<Duration> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
 

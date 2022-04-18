@@ -81,3 +81,31 @@ button:focus:not(:focus-visible) {
 		font-size: 2.4rem;
 	}
 }
+
+.blink {
+    -webkit-animation: blink 5s infinite both ease-in-out;
+            animation: blink 5s infinite both ease-in-out;
+}
+
+@-webkit-keyframes blink {
+  0%,
+  50%,
+  100% {
+    opacity: 1;
+  }
+  25%,
+  75% {
+    opacity: 0.25;
+  }
+}
+@keyframes blink {
+  0%,
+  50%,
+  100% {
+    opacity: 1;
+  }
+  25%,
+  75% {
+    opacity: 0.25;
+  }
+}

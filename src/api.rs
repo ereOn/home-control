@@ -135,7 +135,14 @@ impl Api {
             .and(warp::body::json())
             .and_then(Self::api_red_led_set);
 
-        let api_alarm = warp::path!("api" / "v1" / "alarm")
+        // Status.
+        let api_status_get = warp::path!("api" / "v1" / "status")
+            .and(warp::get())
+            .and(api_filter.clone())
+            .and_then(Self::api_status_get);
+
+        // Alarm.
+        let api_alarm_get = warp::path!("api" / "v1" / "alarm")
             .and(warp::get())
             .and(api_filter.clone())
             .and_then(Self::api_alarm_get);
@@ -164,7 +171,8 @@ impl Api {
             .or(api_green_led_set)
             .or(api_buzzer_get)
             .or(api_buzzer_set)
-            .or(api_alarm)
+            .or(api_status_get)
+            .or(api_alarm_get)
             .or(api_light_get)
             .or(api_light_set)
     }
@@ -230,6 +238,12 @@ impl Api {
         //    .get_light(GpioPin::RedLed)
         //    .map_err(|_| warp::reject::reject())?;
         let status = true;
+
+        Ok(warp::reply::json(&status))
+    }
+
+    async fn api_status_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
+        let status = self.ha_controller.status().await;
 
         Ok(warp::reply::json(&status))
     }
