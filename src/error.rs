@@ -5,6 +5,11 @@ pub enum Error {
         #[from]
         error: super::home_assistant::Error,
     },
+    #[error("json error: {error}")]
+    JsonError {
+        #[from]
+        error: serde_json::Error,
+    },
     #[error("unknown error: {source}")]
     Unknown {
         #[from]

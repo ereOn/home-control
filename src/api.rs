@@ -1,21 +1,100 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::Context;
-use log::{debug, info, warn};
+use chrono::{DateTime, Utc};
+use log::error;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 use warp::{Filter, Rejection, Reply};
 
 use crate::{
-    config::GpioConfig,
+    config::{GpioConfig, HomeControlConfig},
     gpio_controller::{GpioController, GpioPin},
-    home_assistant::{Controller, Event},
+    home_assistant::{self, Controller},
+    Result,
 };
 
 pub struct Api {
     gpio_controller: GpioController,
     ha_controller: Controller,
-    light_states: Mutex<BTreeMap<String, bool>>,
+    home_control_config: HomeControlConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum Status {
+    Disconnected,
+    #[serde(rename_all = "camelCase")]
+    Connected {
+        location: String,
+        weather_current: Box<WeatherStatus>,
+        weather_forecast: Box<WeatherStatus>,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeatherStatus {
+    pub timestamp: DateTime<Utc>,
+    pub state: String,
+    pub humidity: Option<f64>,
+    pub pressure: Option<f64>,
+    pub temperature: f64,
+    pub wind_speed: f64,
+    pub wind_bearing: f64,
+}
+
+impl Status {
+    fn new(
+        ha_status: home_assistant::Status,
+        home_control_config: &HomeControlConfig,
+    ) -> Result<Self> {
+        Ok(match ha_status {
+            home_assistant::Status::Disconnected => Status::Disconnected,
+            home_assistant::Status::Connected { mut entities } => {
+                let weather_state: home_assistant::WeatherState = entities
+                    .remove(&home_control_config.weather_entity)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Weather entity `{}` was not found",
+                            home_control_config.weather_entity
+                        )
+                    })?
+                    .try_into()?;
+
+                let first_forecast = weather_state
+                    .attributes
+                    .forecast
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("No forecast found"))?;
+
+                let weather_current = Box::new(WeatherStatus {
+                    timestamp: weather_state.last_changed,
+                    state: weather_state.state,
+                    humidity: Some(weather_state.attributes.humidity),
+                    pressure: Some(weather_state.attributes.pressure),
+                    temperature: weather_state.attributes.temperature,
+                    wind_speed: weather_state.attributes.wind_speed,
+                    wind_bearing: weather_state.attributes.wind_bearing,
+                });
+                let weather_forecast = Box::new(WeatherStatus {
+                    timestamp: first_forecast.datetime,
+                    state: first_forecast.condition,
+                    humidity: None,
+                    pressure: None,
+                    temperature: first_forecast.temperature,
+                    wind_speed: first_forecast.wind_speed,
+                    wind_bearing: first_forecast.wind_bearing,
+                });
+
+                Status::Connected {
+                    location: home_control_config.location.clone(),
+                    weather_current,
+                    weather_forecast,
+                }
+            }
+        })
+    }
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
@@ -35,53 +114,18 @@ impl From<ApiBool> for bool {
 }
 
 impl Api {
-    pub fn new(config: GpioConfig, ha_controller: Controller) -> anyhow::Result<Arc<Self>> {
+    pub fn new(
+        config: GpioConfig,
+        ha_controller: Controller,
+        home_control_config: HomeControlConfig,
+    ) -> anyhow::Result<Arc<Self>> {
         let gpio = GpioController::new(config).context("failed to create GPIO")?;
 
         Ok(Arc::new(Self {
             gpio_controller: gpio,
             ha_controller,
-            light_states: Mutex::new(BTreeMap::new()),
+            home_control_config,
         }))
-    }
-
-    pub async fn run(&self) -> anyhow::Result<()> {
-        info!("API loop started.");
-
-        info!("Subscribing to Home Assistant events.");
-
-        let mut last_ping = std::time::Instant::now();
-
-        loop {
-            tokio::select! {
-                r = self.ha_controller.ping(), if last_ping.elapsed() > Duration::from_secs(10) => {
-                    last_ping = std::time::Instant::now();
-
-                    match r {
-                        Ok(duration) => debug!("Latency with Home Assistant: {}ms", duration.as_millis()),
-                        Err(err) => warn!("Failed to ping Home Assistant: {}", err),
-                    }
-                },
-                r = self.ha_controller.wait_for_event() => match r {
-                    Ok(event) => {
-                        match *event {
-                            Event::StateChanged{data, .. } => {
-                                match data.entity_id.split_once('.') {
-                                    Some(("light", name)) => {
-                                        if let Some(state) = data.new_state {
-                                            info!("Saving new status for light {}: {}", name, state.as_bool());
-                                            self.light_states.lock().await.insert(name.to_string(), state.as_bool());
-                                        }
-                                    }
-                                    Some(_) | None => {}
-                                }
-                            }
-                        }
-                    }
-                    Err(err) => warn!("Failed to receive event from Home Assistant: {}", err),
-                }
-            }
-        }
     }
 
     pub fn routes(
@@ -231,6 +275,20 @@ impl Api {
         Ok(warp::reply::json(&status))
     }
 
+    async fn api_status_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
+        let ha_status = self.ha_controller.status().await;
+
+        let status = match Status::new(ha_status, &self.home_control_config) {
+            Ok(status) => status,
+            Err(err) => {
+                error!("failed to get status: {}", err);
+                return Err(err.into());
+            }
+        };
+
+        Ok(warp::reply::json(&status))
+    }
+
     async fn api_alarm_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
         // TODO: Implement.
         //let status = self
@@ -242,20 +300,8 @@ impl Api {
         Ok(warp::reply::json(&status))
     }
 
-    async fn api_status_get(self: Arc<Self>) -> Result<impl Reply, Rejection> {
-        let status = self.ha_controller.status().await;
-
-        Ok(warp::reply::json(&status))
-    }
-
-    async fn api_light_get(self: Arc<Self>, light: String) -> Result<impl Reply, Rejection> {
-        let status = self
-            .light_states
-            .lock()
-            .await
-            .get(&light)
-            .cloned()
-            .unwrap_or_default();
+    async fn api_light_get(self: Arc<Self>, _light: String) -> Result<impl Reply, Rejection> {
+        let status = false;
 
         Ok(warp::reply::json(&status))
     }

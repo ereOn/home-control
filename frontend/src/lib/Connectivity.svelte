@@ -3,7 +3,7 @@
 </script>
 
 <div>
-	{#if $api.status === 'disconnected'}
+	{#if $api.status.status === 'disconnected'}
 		<div class="disconnected blink" />
 	{/if}
 	<slot />

@@ -1,15 +1,15 @@
 <script lang="ts">
-	let temperature = 25;
-	let city = "L'Assomption";
-	let weather = 'Cloudy';
+	import { api } from './api';
 </script>
 
 <div>
-	<h1>{temperature}°</h1>
-	<span class="details">
-		<h2>{city}</h2>
-		<p>{weather}</p>
-	</span>
+	{#if $api.status.status === 'connected'}
+		<h1>{$api.status.weatherCurrent.temperature}°</h1>
+		<span class="details">
+			<h2>{$api.status.location}</h2>
+			<p>{$api.status.weatherCurrent.state}</p>
+		</span>
+	{/if}
 </div>
 
 <style lang="scss">

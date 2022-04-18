@@ -5,7 +5,7 @@ async function apiGetStatus() {
 }
 
 const initialState = {
-	status: "",
+	status: {},
 	isLoading: false,
 	error: ""
 };

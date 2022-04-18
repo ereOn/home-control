@@ -6,7 +6,7 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::{sync::RwLock, time::Instant};
+use tokio::sync::RwLock;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Error as WsError, Message as WsMessage},
@@ -28,53 +28,29 @@ impl<T> WebSocket for T where
 type Sender = tokio::sync::oneshot::Sender<Result<serde_json::Value>>;
 type MessageAndSender = (Message, Sender);
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClientStatus {
-    Connected,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum Status {
+    Connected { entities: HashMap<String, State> },
     Disconnected,
 }
 
 pub struct Client {
     access_token: String,
     ws_url: Url,
-    events_subscription: EventsSubscription,
+    events_subscription: Vec<Option<String>>,
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
     rx: tokio::sync::mpsc::Receiver<MessageAndSender>,
-    events_tx: tokio::sync::broadcast::Sender<Box<Event>>,
-    _events_rx: tokio::sync::broadcast::Receiver<Box<Event>>,
-    status: Arc<RwLock<ClientStatus>>,
+    status: Arc<RwLock<Status>>,
 }
 
 pub struct Controller {
     tx: tokio::sync::mpsc::Sender<MessageAndSender>,
-    events_rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<Box<Event>>>,
-    status: Arc<RwLock<ClientStatus>>,
-}
-
-#[derive(Clone)]
-pub enum EventsSubscription {
-    All,
-    Specific(Vec<String>),
-}
-
-impl EventsSubscription {
-    fn to_event_types(&self) -> Vec<Option<String>> {
-        match self {
-            Self::All => vec![None],
-            Self::Specific(event_types) => {
-                event_types.iter().map(|s| Some(s.to_string())).collect()
-            }
-        }
-    }
+    status: Arc<RwLock<Status>>,
 }
 
 impl Client {
-    pub async fn new(
-        endpoint: &str,
-        access_token: String,
-        events_subscription: EventsSubscription,
-    ) -> Result<Self> {
+    pub async fn new(endpoint: &str, access_token: String) -> Result<Self> {
         info!("Using Home-Assistant instance at: {}", endpoint);
 
         let ws_url = Url::parse(&format!("wss://{}/api/websocket", endpoint))
@@ -83,7 +59,8 @@ impl Client {
         info!("Will establish Home-Assistant web-socket at: {}", ws_url);
 
         let (tx, rx) = tokio::sync::mpsc::channel(1);
-        let (events_tx, _events_rx) = tokio::sync::broadcast::channel(128);
+
+        let events_subscription = vec![Some("state_changed".to_string())];
 
         Ok(Self {
             access_token,
@@ -91,9 +68,7 @@ impl Client {
             events_subscription,
             tx,
             rx,
-            events_tx,
-            _events_rx,
-            status: Arc::new(RwLock::new(ClientStatus::Disconnected)),
+            status: Arc::new(RwLock::new(Status::Disconnected)),
         })
     }
 
@@ -122,7 +97,7 @@ impl Client {
         Ok(())
     }
 
-    async fn subscribe_to_trigger(
+    async fn _subscribe_to_trigger(
         tx: &mut tokio::sync::mpsc::Sender<MessageAndSender>,
         trigger: serde_json::Value,
     ) -> Result<()> {
@@ -141,11 +116,31 @@ impl Client {
         Ok(())
     }
 
+    async fn get_states(
+        tx: &mut tokio::sync::mpsc::Sender<MessageAndSender>,
+    ) -> Result<HashMap<String, State>> {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+
+        tx.send((Message::GetStates { id: 0 }, sender))
+            .await
+            .context("failed to send the `get states` message")?;
+
+        let result = receiver
+            .await
+            .context("failed to receive the `get states` response")??;
+
+        debug!("Get states result: {:?}", result);
+
+        Ok(serde_json::from_value::<Vec<State>>(result)?
+            .into_iter()
+            .map(|s| (s.entity_id.to_string(), s))
+            .collect())
+    }
+
     /// Get a new controller on the client.
     pub fn new_controller(&self) -> Controller {
         Controller {
             tx: self.tx.clone(),
-            events_rx: tokio::sync::Mutex::new(self.events_tx.subscribe()),
             status: Arc::clone(&self.status),
         }
     }
@@ -164,7 +159,7 @@ impl Client {
                 }
                 Ok((ws, _)) => {
                     if let Err(err) = self.run_with_ws(ws).await {
-                        *self.status.write().await = ClientStatus::Disconnected;
+                        *self.status.write().await = Status::Disconnected;
 
                         warn!(
                             "Home-Assistant web-socket connection was interuppted: {}",
@@ -178,21 +173,34 @@ impl Client {
 
     async fn run_with_ws(&mut self, mut ws: impl WebSocket) -> Result<()> {
         let mut authenticated = false;
-        let event_types = self.events_subscription.to_event_types();
-        let mut subscribed_to_events = event_types.is_empty();
+        let mut init_done = false;
         let mut id: u64 = 1;
         let mut senders_by_id = HashMap::new();
         let tx = &mut self.tx;
         let rx = &mut self.rx;
 
-        let subscription = Self::subscribe_to_events(tx, event_types.clone());
-        tokio::pin!(subscription);
+        async fn init_fn(
+            tx: &mut tokio::sync::mpsc::Sender<MessageAndSender>,
+            event_types: Vec<Option<String>>,
+        ) -> Result<HashMap<String, State>> {
+            Client::subscribe_to_events(tx, event_types).await?;
+
+            Client::get_states(tx).await
+        }
+
+        let init = init_fn(tx, self.events_subscription.clone());
+
+        tokio::pin!(init);
+
+        let mut last_ping = tokio::time::Instant::now();
+        let mut last_ping_id = id;
+        let ping_interval = Duration::from_secs(10);
 
         loop {
             tokio::select! {
-                _ = &mut subscription, if authenticated && !subscribed_to_events => {
-                    subscribed_to_events = true;
-                    *self.status.write().await = ClientStatus::Connected;
+                states = &mut init, if authenticated && !init_done => {
+                    init_done = true;
+                    *self.status.write().await = Status::Connected{entities: states?};
                 }
                 pair = rx.recv(), if authenticated =>
                     if let Some((mut message, sender)) = pair {
@@ -208,6 +216,13 @@ impl Client {
                     } else {
                         return Err(anyhow::anyhow!("channel closed")).map_err(Into::into);
                     },
+                _ = tokio::time::sleep_until(last_ping + ping_interval), if authenticated => {
+                    last_ping = tokio::time::Instant::now();
+
+                    id += 1;
+                    last_ping_id = id;
+                    Self::send_message(&mut ws, Message::Ping { id }).await?;
+                },
                 message = Self::read_message(&mut ws) => match message? {
                     Message::AuthRequired { ha_version } => {
                         info!(
@@ -243,20 +258,29 @@ impl Client {
                         }
                     }
                     Message::Pong { id } => {
-                        if let Some(sender) = senders_by_id.remove(&id) {
-                            if sender.send(Ok(json!(null))).is_err() {
-                                warn!("Failed to send pong to sender for call #{}", id);
-                            }
+                        if id == last_ping_id  {
+                            let duration = last_ping.elapsed();
+
+                            debug!("Ping duration: {}ms", duration.as_millis());
                         } else {
-                            warn!("Discarding pong for unknown id: {}", id);
+                            warn!("Discarding unexpected pong with id `{}` when `{}` was expected", id, last_ping_id);
                         }
                     }
                     Message::Event { id, event } => {
                         debug!("Received event {}: {}", id, event);
 
-                        self.events_tx
-                            .send(event)
-                            .context("failed to send event").map(|_| ())?;
+                        if let Event::StateChanged {
+                                data: StateChangedData {
+                                    entity_id,
+                                    new_state: Some(new_state),
+                                    ..
+                                },
+                            ..
+                        } = event.as_ref() {
+                            if let Status::Connected{entities} = &mut *self.status.write().await {
+                                entities.insert(entity_id.clone(), new_state.clone());
+                            }
+                        }
                     }
                     message => {
                         warn!(
@@ -324,29 +348,8 @@ impl Client {
 }
 
 impl Controller {
-    pub async fn status(&self) -> ClientStatus {
-        *self.status.read().await
-    }
-
-    pub async fn ping(&self) -> Result<Duration> {
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-
-        let now = Instant::now();
-
-        self.tx
-            .send((Message::Ping { id: 0 }, sender))
-            .await
-            .context("failed to send the ping message")?;
-
-        receiver
-            .await
-            .context("failed to receive the ping response")??;
-
-        let duration = now.elapsed();
-
-        debug!("Ping duration: {}ms", duration.as_millis());
-
-        Ok(duration)
+    pub async fn status(&self) -> Status {
+        (*self.status.read().await).clone()
     }
 
     pub async fn call_service(
@@ -400,21 +403,6 @@ impl Controller {
         )
         .await
     }
-
-    /// Wait for the next event.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the event stream closed.
-    pub async fn wait_for_event(&self) -> Result<Box<Event>> {
-        self.events_rx
-            .lock()
-            .await
-            .recv()
-            .await
-            .context("failed to receive event")
-            .map_err(Into::into)
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -464,6 +452,9 @@ enum Message {
         id: u64,
         event: Box<Event>,
     },
+    GetStates {
+        id: u64,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -502,7 +493,8 @@ impl Message {
             | Self::SubscribeTrigger { id, .. }
             | Self::Ping { id }
             | Self::Pong { id }
-            | Self::Event { id, .. } => {
+            | Self::Event { id, .. }
+            | Self::GetStates { id } => {
                 *id = new_id;
 
                 true
@@ -571,8 +563,54 @@ impl Display for Event {
     }
 }
 
-impl State {
-    pub fn as_bool(&self) -> bool {
-        matches!(self.state.as_str(), "on" | "1" | "true")
+impl From<State> for bool {
+    fn from(s: State) -> Self {
+        matches!(s.state.as_str(), "on" | "1" | "true")
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WeatherState {
+    pub entity_id: String,
+    pub state: String,
+    pub last_changed: DateTime<Utc>,
+    pub last_updated: DateTime<Utc>,
+    pub attributes: WeatherAttributes,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WeatherAttributes {
+    pub attribution: Option<String>,
+    pub forecast: Vec<WeatherForecast>,
+    pub friendly_name: String,
+    pub humidity: f64,
+    pub pressure: f64,
+    pub temperature: f64,
+    pub wind_bearing: f64,
+    pub wind_speed: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct WeatherForecast {
+    pub condition: String,
+    pub datetime: DateTime<Utc>,
+    pub precipitation: f64,
+    pub temperature: f64,
+    pub templow: f64,
+    pub wind_bearing: f64,
+    pub wind_speed: f64,
+}
+
+impl TryFrom<State> for WeatherState {
+    type Error = crate::Error;
+
+    fn try_from(value: State) -> Result<Self, Self::Error> {
+        Ok(WeatherState {
+            entity_id: value.entity_id,
+            state: value.state,
+            last_changed: value.last_changed,
+            last_updated: value.last_updated,
+            attributes: serde_json::from_value(value.attributes)?,
+        })
     }
 }

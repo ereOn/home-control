@@ -1,6 +1,7 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 
 const DEFAULT_RED_LED_PIN: &str = "17";
 const DEFAULT_GREEN_LED_PIN: &str = "27";
@@ -10,6 +11,7 @@ const DEFAULT_ECHO_PIN: &str = "23";
 
 pub struct Config {
     pub debug: bool,
+    pub home_control_config: HomeControlConfig,
     pub listen_endpoint: SocketAddr,
     pub reverse_proxy_url: Option<String>,
     pub gpio_config: GpioConfig,
@@ -25,12 +27,31 @@ pub struct GpioConfig {
     pub echo_pin: u8,
 }
 
+/// The configuration for the home-control application.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HomeControlConfig {
+    /// The location to display in the UI.
+    pub location: String,
+
+    /// The entity to fetch the weather from.
+    pub weather_entity: String,
+}
+
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// Enables debug output.
     #[clap(long, short)]
     pub debug: bool,
+
+    #[clap(
+        long,
+        value_name = "CONFIG_FILE",
+        env,
+        help = "The path to the configuration file",
+        default_value = "/etc/home-control/config.yaml"
+    )]
+    pub config_file: PathBuf,
 
     #[clap(
         value_name = "HOME_ASSISTANT_ENDPOINT",
@@ -98,9 +119,16 @@ struct Args {
 impl Config {
     pub fn new() -> anyhow::Result<Self> {
         let args = Args::try_parse()?;
+        let config_file = args.config_file;
+        let home_control_config = config::Config::builder()
+            .add_source(config::File::from(config_file))
+            .add_source(config::Environment::with_prefix("HOME_CONTROL"))
+            .build()?
+            .try_deserialize()?;
 
         Ok(Self {
             debug: args.debug,
+            home_control_config,
             home_assistant_endpoint: args.home_assistant_endpoint,
             home_assistant_token: args.home_assistant_token,
             listen_endpoint: args.listen_endpoint,
