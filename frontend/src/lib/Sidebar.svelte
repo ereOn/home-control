@@ -22,7 +22,7 @@
 		background-color: rgba(0, 0, 0, 0.5);
 		backdrop-filter: blur(4px);
 		justify-content: end;
-		align-items: left;
+		align-items: flex-start;
 
 		* {
 			margin: 8px;

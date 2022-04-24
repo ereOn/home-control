@@ -1,5 +1,26 @@
 <script lang="ts">
 	import { api } from './api';
+
+	$: weatherCurrentLabel =
+		$api.status.status === 'connected'
+			? {
+					'clear-night': 'Nuit dégagée',
+					cloudy: 'Nuageux',
+					fog: 'Brumeux',
+					hail: 'Grêle',
+					lightning: 'Orage',
+					'lighting-rainy': 'Pluie orageuse',
+					partlycloudy: 'Partiellement nuageux',
+					pouring: 'Pluie forte',
+					rainy: 'Pluvieux',
+					snowy: 'Neigeux',
+					'snowy-rainy': 'Pluie verglaçante',
+					sunny: 'Ensoleillé',
+					windy: 'Venteux',
+					'windy-variant': 'Vents variables',
+					exceptional: 'Inhabituel'
+			  }[$api.status.weatherCurrent.state]
+			: '';
 </script>
 
 <div>
@@ -7,7 +28,7 @@
 		<h1>{$api.status.weatherCurrent.temperature}°</h1>
 		<span class="details">
 			<h2>{$api.status.location}</h2>
-			<p>{$api.status.weatherCurrent.state}</p>
+			<p>{weatherCurrentLabel}</p>
 		</span>
 	{/if}
 </div>
@@ -16,6 +37,7 @@
 	div {
 		display: flex;
 		flex-direction: row;
+		text-shadow: 6px 6px 12px rgba(0, 0, 0, 0.4);
 
 		h1 {
 			font-size: 550%;

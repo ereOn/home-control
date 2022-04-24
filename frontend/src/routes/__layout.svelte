@@ -2,12 +2,30 @@
 	import Sidebar from '$lib/Sidebar.svelte';
 	import Connectivity from '$lib/Connectivity.svelte';
 	import '../app.css';
+	import { api } from '../lib/api';
 
-	let weather = 'rainy';
+	$: weatherCurrent = $api.status.status === 'connected' ? $api.status.weatherCurrent.state : '';
+	$: weatherForecast = $api.status.status === 'connected' ? $api.status.weatherForecast.state : '';
+
+	let rootElement;
+
+	$: if (rootElement) {
+		rootElement.style.setProperty(
+			'--weather-current-image-url',
+			'url("/backgrounds/weather/' + weatherCurrent + '.jpg")'
+		);
+		rootElement.style.setProperty(
+			'--weather-forecast-image-url',
+			'url("/backgrounds/weather/' + weatherForecast + '.jpg")'
+		);
+	}
 </script>
 
 <Connectivity>
-	<main class={weather}>
+	<main bind:this={rootElement}>
+		<div class="weather weather-forecast" />
+		<div class="weather weather-current" />
+
 		<div id="content">
 			<slot />
 		</div>
@@ -16,8 +34,14 @@
 	</main>
 </Connectivity>
 
-<style>
+<style lang="scss">
+	:root {
+		--weather-current-image-url: '';
+		--weather-forecast-image-url: '';
+	}
+
 	main {
+		position: relative;
 		flex: 1;
 		display: flex;
 		flex-direction: row;
@@ -29,30 +53,51 @@
 		justify-content: space-between;
 		align-items: stretch;
 		color: white;
-		background-position: center 25%;
-		background-repeat: no-repeat;
-		background-size: cover;
-	}
 
-	main > div#content {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		justify-items: flex-end;
-		justify-content: flex-end;
-		margin: 16px;
-	}
+		& > .weather {
+			position: absolute;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
 
-	main.rainy {
-		background-image: url('/backgrounds/weather/rainy.jpg');
-	}
+			background-position: center 25%;
+			background-repeat: no-repeat;
+			background-size: cover;
+			z-index: 0;
 
-	main.sunny {
-		background-image: url('/backgrounds/weather/sunny.jpg');
-	}
+			&.weather-forecast {
+				background-image: var(--weather-forecast-image-url);
+			}
 
-	main.cloudy {
-		background-image: url('/backgrounds/weather/cloudy.jpg');
+			&.weather-current {
+				background-image: var(--weather-current-image-url);
+				mask-image: linear-gradient(
+					106deg,
+					rgba(255, 255, 255, 1) 0%,
+					rgba(255, 255, 255, 1) 60%,
+					rgba(0, 0, 0, 0) 70%,
+					rgba(0, 0, 0, 0) 100%
+				);
+				-webkit-mask-image: linear-gradient(
+					106deg,
+					rgba(255, 255, 255, 1) 0%,
+					rgba(255, 255, 255, 1) 60%,
+					rgba(0, 0, 0, 0) 70%,
+					rgba(0, 0, 0, 0) 100%
+				);
+			}
+		}
+
+		> div#content {
+			flex: 1;
+			display: flex;
+			flex-direction: column;
+			align-items: flex-start;
+			justify-items: flex-end;
+			justify-content: flex-end;
+			margin: 16px;
+			z-index: 1;
+		}
 	}
 </style>
