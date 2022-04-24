@@ -1,7 +1,8 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde_with::{serde_as, DurationSeconds};
 
 const DEFAULT_RED_LED_PIN: &str = "17";
 const DEFAULT_GREEN_LED_PIN: &str = "27";
@@ -28,13 +29,35 @@ pub struct GpioConfig {
 }
 
 /// The configuration for the home-control application.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde_as]
+#[derive(Debug, Clone, Deserialize)]
 pub struct HomeControlConfig {
     /// The location to display in the UI.
     pub location: String,
 
     /// The entity to fetch the weather from.
     pub weather_entity: String,
+
+    /// Sensor activation distance.
+    #[serde(default = "HomeControlConfig::default_sensor_activation_distance")]
+    pub sensor_activation_distance_cm: f64,
+
+    /// Presence inactivity timeout.
+    ///
+    /// The time in seconds to wait after the sensor has detected an absence to trigger a reaction.
+    #[serde(default = "HomeControlConfig::default_presence_inactivity_timeout")]
+    #[serde_as(as = "DurationSeconds<f64>")]
+    pub presence_inactivity_timeout: Duration,
+}
+
+impl HomeControlConfig {
+    fn default_sensor_activation_distance() -> f64 {
+        40.0
+    }
+
+    fn default_presence_inactivity_timeout() -> Duration {
+        Duration::from_secs(5)
+    }
 }
 
 #[derive(Parser, Debug)]
